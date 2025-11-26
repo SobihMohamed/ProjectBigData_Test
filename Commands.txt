@@ -1,0 +1,19 @@
+Zookeeper
+.\bin\windows\zookeeper-server-start.bat .\config\zookeeper.properties
+
+Kafka Server
+.\bin\windows\kafka-server-start.bat .\config\server.properties
+
+create 3 topics 2 for input and 1 for output 
+
+.\bin\windows\kafka-topics.bat --create --topic topic-file-1 --bootstrap-server localhost:9092 --partitions 1 --replication-factor 1
+
+
+.\bin\windows\kafka-topics.bat --create --topic topic-file-2 --bootstrap-server localhost:9092 --partitions 1 --replication-factor 1
+
+
+.\bin\windows\kafka-topics.bat --create --topic topic-processed-data --bootstrap-server localhost:9092 --partitions 1 --replication-factor 1
+
+run producer.py 
+
+open nifi => C:\nifi-2.6.0\bin>nifi.cmd start
