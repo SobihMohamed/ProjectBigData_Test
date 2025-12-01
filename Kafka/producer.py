@@ -11,7 +11,7 @@ class Producer:
             value_serializer=lambda v: json.dumps(v).encode('utf-8')
         )
 
-    def start_streaming(self, file1_path, file2_path, topic1, topic2 , limit = 50):
+    def start_streaming(self, file1_path, file2_path, topic1, topic2 , limit = 100):
         print(f"---Starting Stream from:\n 1. {file1_path}\n 2. {file2_path}\n---")
         
         try:
@@ -38,7 +38,7 @@ class Producer:
                     if counter > limit :
                       break
                     
-                    time.sleep(3)
+                    time.sleep(0.3)
             
             self.producer.flush()
             print("\n --- Done Sending All Data ---")
