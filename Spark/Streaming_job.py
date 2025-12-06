@@ -3,7 +3,7 @@ import time
 os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.1,com.microsoft.sqlserver:mssql-jdbc:12.4.2.jre11 pyspark-shell'
 
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import from_json, col, explode, avg, max, min, to_timestamp, expr, trim
+from pyspark.sql.functions import from_json, col, explode, avg, max, min, to_timestamp, expr, trim  , sum
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, IntegerType, ArrayType
 
 class EnergyProject:
@@ -34,20 +34,32 @@ class EnergyProject:
             StructField("Energy_kWh", StringType(), True),
             StructField("Peak_Hours_Flag", StringType(), True),
             StructField("Sudden_Increase_Flag", StringType(), True),
-            StructField("Temperature_C", StringType(), True)
+            StructField("Temperature_C", StringType(), True),
         ])
     def write_stats_to_db(self, df, epoch_id):
         if df.count() > 0:
             print(f"\n[Batch {epoch_id}] Writing Stats to SQL Server...")
+            df = df.orderBy("House_ID")
             try:
                 df.write.jdbc(url=self.db_url, table="DeviceStats", mode="overwrite", properties=self.db_props)
                 print("Saved to DB Successfully!")
             except Exception as e:
                 print(f"Error Writing to DB: {e}")
 
+    def write_house_stats_to_db(self, df, epoch_id):
+        if df.count() > 0:
+            print(f"\n[Batch {epoch_id}] Writing HOUSE TOTALS to SQL Server...")
+            df = df.orderBy("House_ID")
+            try:
+                df.write.jdbc(url=self.db_url, table="HouseTotalLoad", mode="overwrite", properties=self.db_props)
+                print("House Stats Saved!")
+            except Exception as e:
+                print(f"Error Writing House Stats: {e}")
+
     def write_alerts_to_db(self, df, epoch_id):
         if df.count() > 0:
             print(f"\n[Batch {epoch_id}] Writing ALERTS to SQL Server...")
+            df = df.orderBy("House_ID")
             try:
                 df.write.jdbc(url=self.db_url, table="AlertsLog", mode="append", properties=self.db_props)
                 print("Saved to DB Successfully!")
@@ -83,7 +95,9 @@ class EnergyProject:
             .withColumn("EventTime", to_timestamp(trim(col("Timestamp")), "M/d/yyyy H:mm")) \
             .withColumn("House_ID", trim(col("House_ID"))) \
             .withColumn("Power_Usage_W", col("Power_Usage_W").cast(DoubleType())) \
-            .withColumn("Sudden_Increase_Flag", col("Sudden_Increase_Flag").cast(IntegerType()))
+            .withColumn("Sudden_Increase_Flag", col("Sudden_Increase_Flag").cast(IntegerType())) \
+            .withColumn("Temperature_C", col("Temperature_C").cast(DoubleType())) \
+            .withColumn("Temp_Status", expr("CASE WHEN Temperature_C >= 30 THEN 'HIGH_HEAT' ELSE 'NORMAL' END"))
 
         # 4. Data Splitting & Watermarking
         measurements_df = clean_df.filter(
@@ -95,7 +109,7 @@ class EnergyProject:
             .withWatermark("EventTime", "20 minutes")
         
         flags_df = clean_df.filter(col("Sudden_Increase_Flag") == 1) \
-            .select("EventTime", "House_ID" , "Sudden_Increase_Flag", "Peak_Hours_Flag") \
+            .select("EventTime", "House_ID" , "Sudden_Increase_Flag", "Peak_Hours_Flag" , "Temp_Status") \
             .withWatermark("EventTime", "20 minutes")
         
         # 5. JOIN
@@ -108,7 +122,8 @@ class EnergyProject:
             col("m.Device"),
             col("m.Power_Usage_W"),
             col("f.Sudden_Increase_Flag"),
-            col("f.Peak_Hours_Flag")
+            col("f.Peak_Hours_Flag"),
+            col("f.Temp_Status")
         )
         
         joined_alerts = joined_alerts.dropDuplicates(["EventTime", "House_ID"])
@@ -133,6 +148,15 @@ class EnergyProject:
             .foreachBatch(self.write_alerts_to_db) \
             .start()
 
+        query3 = measurements_df \
+            .groupBy("House_ID") \
+            .agg(sum("Power_Usage_W").alias("Total_Load")) \
+            .writeStream \
+            .outputMode("complete") \
+            .trigger(processingTime='10 seconds') \
+            .foreachBatch(self.write_house_stats_to_db) \
+            .start()
+        
         self.spark.streams.awaitAnyTermination()
 
 if __name__ == "__main__":
